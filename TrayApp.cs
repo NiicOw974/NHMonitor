@@ -26,6 +26,13 @@ public sealed class TrayApp : ApplicationContext
     private string _currentIconKey = "";
     private ReportForm? _reportForm;
 
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 60_000 };
+    private ToolStripMenuItem _updateItem = null!;
+    private ToolStripMenuItem _autoUpdateItem = null!;
+    private UpdateInfo? _availableUpdate;
+    private Version? _notifiedVersion;
+    private bool _updateBusy;
+
     public TrayApp()
     {
         _hardware = new HardwareService();
@@ -46,7 +53,124 @@ public sealed class TrayApp : ApplicationContext
             if (e.Button == MouseButtons.Left) ToggleOverlay();
         };
 
+        _tray.BalloonTipClicked += (_, _) => InstallUpdate();
+        // Première vérification une minute après le démarrage, puis contrôle toutes les heures
+        // (une requête réelle au plus toutes les 24 h).
+        _updateTimer.Tick += (_, _) =>
+        {
+            _updateTimer.Interval = 3_600_000;
+            if (_settings.CheckForUpdates
+                && (_settings.LastUpdateCheckUtc is not { } last || DateTime.UtcNow - last > TimeSpan.FromHours(24)))
+                _ = CheckForUpdatesAsync(manual: false);
+        };
+        _updateTimer.Start();
+
         _ = Task.Run(() => MeasureLoop(_cts.Token));
+    }
+
+    // ---------- Mises à jour ----------
+
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (_updateBusy) return;
+        _updateBusy = true;
+        try
+        {
+            var update = await UpdateService.CheckAsync(_cts.Token);
+            _settings.LastUpdateCheckUtc = DateTime.UtcNow;
+            _settings.Save();
+
+            if (update is null)
+            {
+                if (manual)
+                    MessageBox.Show($"NHMonitor {UpdateService.CurrentVersion.ToString(3)} est à jour.", "NHMonitor",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            _availableUpdate = update;
+            _updateItem.Text = $"Installer la mise à jour {update.Version.ToString(3)}…";
+            _updateItem.Visible = true;
+
+            if (manual)
+            {
+                _updateBusy = false;
+                InstallUpdate();
+            }
+            else if (_notifiedVersion != update.Version)
+            {
+                _notifiedVersion = update.Version;
+                _tray.ShowBalloonTip(15000, "Mise à jour disponible",
+                    $"NHMonitor {update.Version.ToString(3)} est disponible. Cliquez ici pour l'installer.", ToolTipIcon.Info);
+            }
+        }
+        catch (Exception ex) when (!_cts.IsCancellationRequested)
+        {
+            Program.Log(ex);
+            if (manual)
+                MessageBox.Show($"Impossible de vérifier les mises à jour :\n{ex.Message}", "NHMonitor",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _updateBusy = false;
+        }
+    }
+
+    private async void InstallUpdate()
+    {
+        var update = _availableUpdate;
+        if (update is null || _updateBusy) return;
+        string newVersion = update.Version.ToString(3);
+
+        if (!UpdateService.CanInstallAutomatically)
+        {
+            if (MessageBox.Show(
+                    $"NHMonitor {newVersion} est disponible.\n\nCette copie (version portable, ou lancée sans droits administrateur) " +
+                    "ne peut pas se mettre à jour elle-même. Ouvrir la page de téléchargement ?",
+                    "NHMonitor", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                UpdateService.OpenReleasePage(update.ReleaseUrl);
+            return;
+        }
+
+        string notes = update.Notes.Length > 1200 ? update.Notes[..1200] + "…" : update.Notes;
+        if (MessageBox.Show(
+                $"NHMonitor {newVersion} est disponible (version actuelle : {UpdateService.CurrentVersion.ToString(3)}).\n\n" +
+                $"{notes}\n\nTélécharger et installer maintenant ? NHMonitor redémarrera automatiquement.",
+                "Mise à jour de NHMonitor", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        _updateBusy = true;
+        using var form = new UpdateProgressForm(update.Version);
+        form.Show();
+        try
+        {
+            string installer = await UpdateService.DownloadAsync(update, new Progress<int>(form.Report), form.Cancellation.Token);
+            form.SetStatus("Lancement de l'installation…");
+            UpdateService.LaunchInstaller(installer);
+            ExitThread(); // L'installeur remplace les fichiers puis relance NHMonitor.
+        }
+        catch (OperationCanceledException) when (form.Cancellation.IsCancellationRequested)
+        {
+            // Annulé par l'utilisateur.
+        }
+        catch (UpdateSecurityException ex)
+        {
+            Program.Log(ex);
+            form.Hide();
+            MessageBox.Show($"Mise à jour refusée pour une raison de sécurité :\n{ex.Message}\n\nAucun fichier n'a été exécuté.",
+                "NHMonitor", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        catch (Exception ex)
+        {
+            Program.Log(ex);
+            form.Hide();
+            MessageBox.Show($"Échec de la mise à jour :\n{ex.Message}", "NHMonitor", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _updateBusy = false;
+        }
     }
 
     // ---------- Mesures ----------
@@ -136,6 +260,9 @@ public sealed class TrayApp : ApplicationContext
         var title = new ToolStripMenuItem("NHMonitor") { Enabled = false };
         title.Font = new Font(title.Font, FontStyle.Bold);
         menu.Items.Add(title);
+        _updateItem = new ToolStripMenuItem("Installer la mise à jour…", null, (_, _) => InstallUpdate()) { Visible = false };
+        _updateItem.Font = new Font(_updateItem.Font, FontStyle.Bold);
+        menu.Items.Add(_updateItem);
         menu.Items.Add(new ToolStripSeparator());
 
         _showOverlayItem = new ToolStripMenuItem("Afficher dans la barre des tâches", null, (_, _) => ToggleOverlay())
@@ -221,6 +348,17 @@ public sealed class TrayApp : ApplicationContext
         menu.Items.Add(_startupItem);
 
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem("Rechercher les mises à jour…", null, (_, _) => _ = CheckForUpdatesAsync(manual: true)));
+        _autoUpdateItem = new ToolStripMenuItem("Vérifier automatiquement les mises à jour", null, (_, _) =>
+        {
+            _settings.CheckForUpdates = !_settings.CheckForUpdates;
+            SaveAndRedraw();
+        });
+        menu.Items.Add(_autoUpdateItem);
+        menu.Items.Add(new ToolStripMenuItem($"À propos (version {UpdateService.CurrentVersion.ToString(3)})", null, (_, _) =>
+            UpdateService.OpenReleasePage($"https://github.com/{UpdateService.Owner}/{UpdateService.Repo}/")));
+
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Rapport des capteurs…", null, (_, _) => ShowReport()));
         menu.Items.Add(new ToolStripMenuItem("Gestionnaire des tâches", null, (_, _) => Program.OpenTaskManager()));
         menu.Items.Add(new ToolStripMenuItem("Quitter", null, (_, _) => ExitThread()));
@@ -270,6 +408,7 @@ public sealed class TrayApp : ApplicationContext
     private void RefreshMenuChecks()
     {
         _showOverlayItem.Checked = _settings.ShowOverlay;
+        _autoUpdateItem.Checked = _settings.CheckForUpdates;
         foreach (ToolStripMenuItem item in _intervalMenu.DropDownItems)
             item.Checked = (int)item.Tag! == _settings.IntervalMs;
         foreach (var item in _displayMenu.DropDownItems.OfType<ToolStripMenuItem>())
@@ -296,6 +435,7 @@ public sealed class TrayApp : ApplicationContext
     protected override void ExitThreadCore()
     {
         _cts.Cancel();
+        _updateTimer.Dispose();
         _reportForm?.Close();
         _tray.Visible = false;
         _tray.Dispose();

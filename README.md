@@ -12,7 +12,7 @@ CPU  23 %  │  GPU  10 %  │  RAM  62 %  │  NET ↓  1.2 Mo/s
      54 °C │       45 °C │     9.9 Go  │      ↑   85 Ko/s
 ```
 
-Gratuit, open source, sans publicité, sans télémétrie : NHMonitor n'établit **aucune connexion réseau**.
+Gratuit, open source, sans publicité, sans télémétrie. Mises à jour intégrées et signées.
 
 ## Installation
 
@@ -23,6 +23,8 @@ Gratuit, open source, sans publicité, sans télémétrie : NHMonitor n'établit
    - **Installer le driver PawnIO** : nécessaire pour les températures CPU. Il est téléchargé depuis sa source officielle et vérifié avant installation.
 
 Le runtime .NET est inclus : il n'y a rien d'autre à installer. Pour désinstaller : **Paramètres > Applications > NHMonitor**.
+
+**Mises à jour** : NHMonitor vérifie chaque jour s'il existe une nouvelle version. Si oui, une notification la propose : un clic, une confirmation, et la mise à jour se télécharge, se vérifie, s'installe puis relance l'application. Vérification manuelle : clic droit > **Rechercher les mises à jour**.
 
 Une **version portable** (`.zip`) est aussi disponible. Elle n'a pas de démarrage automatique, car celui-ci n'est autorisé que pour la version installée dans Program Files (voir [SECURITY.md](SECURITY.md)).
 
@@ -37,6 +39,7 @@ Une **version portable** (`.zip`) est aussi disponible. Elle n'a pas de démarra
   - **Position** : à gauche de la barre, ou à droite près des icônes de notification ;
   - **Fréquence de mise à jour** : de 0,5 s à 5 s ;
   - **Démarrer avec Windows** ;
+  - **Rechercher les mises à jour**, et l'option **Vérifier automatiquement les mises à jour** ;
   - **Rapport des capteurs** : tout ce que LibreHardwareMonitor détecte, utile pour un signalement de bug.
 
 Le widget suit le thème clair ou sombre et la mise à l'échelle de l'écran. Il se masque automatiquement pendant une application en plein écran (jeu, vidéo, présentation). Les valeurs passent en orange puis en rouge quand elles deviennent élevées : charge ≥ 70 % / 90 %, température ≥ 70 °C / 85 °C.
@@ -62,7 +65,15 @@ dotnet build -c Release                       # compilation simple
 .\build\build-release.ps1 -Version 1.0.0      # installeur + zip portable + SHA256SUMS dans dist\
 ```
 
-Les releases officielles sont construites par GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)) lors de la création d'un tag `vX.Y.Z`.
+Sans clé de signature, `build-release.ps1` produit une release non signée, que la mise à jour automatique refusera.
+
+### Publier une nouvelle version (mainteneur)
+
+1. Changer `<Version>` dans `NHMonitor.csproj` (par exemple `1.2.0`), puis committer.
+2. `git tag v1.2.0` puis `git push origin main v1.2.0`.
+3. GitHub Actions ([release.yml](.github/workflows/release.yml)) construit, signe et publie la release. Les copies installées la proposent dans les 24 h.
+
+La signature utilise le secret `RELEASE_SIGNING_KEY` de l'environnement GitHub `release`. Ce secret contient la clé privée ECDSA, dont la clé publique correspondante est [`assets/release-signing-public.pem`](assets/release-signing-public.pem).
 
 | Fichier | Rôle |
 |---|---|
@@ -71,6 +82,8 @@ Les releases officielles sont construites par GitHub Actions ([.github/workflows
 | `TaskbarOverlay.cs` | Widget transparent dans la barre des tâches (fenêtre « layered » au premier plan) |
 | `TrayApp.cs` | Icône de notification, menu et boucle de mesure |
 | `StartupManager.cs` | Démarrage automatique via l'API du Planificateur de tâches |
+| `UpdateService.cs` | Vérification, téléchargement et lancement des mises à jour |
+| `ReleaseSignature.cs` | Vérification de la signature des releases |
 | `ReportForm.cs` | Fenêtre du rapport des capteurs |
 | `Settings.cs` | Préférences dans `%APPDATA%\NHMonitor\settings.json` |
 | `installer/NHMonitor.iss` | Script de l'installeur Inno Setup |

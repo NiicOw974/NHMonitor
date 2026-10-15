@@ -2,11 +2,17 @@
 #   NHMonitor-Setup-<version>.exe          installeur (Program Files, demarrage auto, PawnIO optionnel)
 #   NHMonitor-<version>-portable-win-x64.zip  version portable (sans demarrage automatique)
 #   SHA256SUMS.txt                          empreintes pour verifier les telechargements
+#   SHA256SUMS.txt.sig                      signature ECDSA de SHA256SUMS.txt (exigee par la mise a jour automatique)
 #
-# Usage : powershell -ExecutionPolicy Bypass -File build\build-release.ps1 [-Version 1.0.0]
-# Prerequis : SDK .NET 10, Inno Setup 6 (winget install JRSoftware.InnoSetup)
+# Usage : powershell -ExecutionPolicy Bypass -File build\build-release.ps1 [-Version 1.0.0] [-RequireSignature]
+# Prerequis : SDK .NET 10, Inno Setup 6 (winget install JRSoftware.InnoSetup), OpenSSL (fourni avec Git for Windows)
+#
+# Cle privee de signature, par ordre de priorite :
+#   - variable d'environnement RELEASE_SIGNING_KEY (contenu PEM, utilisee par GitHub Actions) ;
+#   - fichier %USERPROFILE%\.nhmonitor-signing\release-signing-key.pem (poste de l'auteur).
 param(
-    [string]$Version
+    [string]$Version,
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,6 +57,42 @@ if ($LASTEXITCODE -ne 0) { throw "ISCC a echoue" }
 Get-ChildItem $dist -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | Sort-Object Name | ForEach-Object {
     "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
 } | Set-Content "$dist\SHA256SUMS.txt" -Encoding ascii
+
+# 5. Signature de SHA256SUMS.txt.
+$openssl = @(
+    (Get-Command openssl -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1),
+    "$env:ProgramFiles\Git\usr\bin\openssl.exe"
+) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
+$keyFile = $null
+$tempKey = $false
+if ($env:RELEASE_SIGNING_KEY) {
+    $keyFile = Join-Path ([IO.Path]::GetTempPath()) ("nhm-" + [guid]::NewGuid() + ".pem")
+    [IO.File]::WriteAllText($keyFile, $env:RELEASE_SIGNING_KEY)
+    $tempKey = $true
+} elseif (Test-Path "$env:USERPROFILE\.nhmonitor-signing\release-signing-key.pem") {
+    $keyFile = "$env:USERPROFILE\.nhmonitor-signing\release-signing-key.pem"
+}
+
+if ($keyFile -and $openssl) {
+    try {
+        $der = "$dist\SHA256SUMS.sig.der"
+        & $openssl dgst -sha256 -sign $keyFile -out $der "$dist\SHA256SUMS.txt"
+        if ($LASTEXITCODE -ne 0) { throw "Signature OpenSSL echouee" }
+        # Controle avec la cle publique publiee dans le depot (celle integree a l'application).
+        & $openssl dgst -sha256 -verify "$root\assets\release-signing-public.pem" -signature $der "$dist\SHA256SUMS.txt" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "La cle de signature ne correspond pas a assets\release-signing-public.pem" }
+        [IO.File]::WriteAllText("$dist\SHA256SUMS.txt.sig", [Convert]::ToBase64String([IO.File]::ReadAllBytes($der)))
+        Remove-Item $der
+        Write-Host "SHA256SUMS.txt signe."
+    } finally {
+        if ($tempKey) { Remove-Item $keyFile -Force -ErrorAction SilentlyContinue }
+    }
+} elseif ($RequireSignature) {
+    throw "Signature exigee mais cle privee (RELEASE_SIGNING_KEY) ou OpenSSL introuvable."
+} else {
+    Write-Warning "Release NON signee : la mise a jour automatique la refusera."
+}
 
 Write-Host ""
 Get-ChildItem $dist | Format-Table Name, @{n='Taille (Mo)'; e={ '{0:N1}' -f ($_.Length / 1MB) }} -AutoSize

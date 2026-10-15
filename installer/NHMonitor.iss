@@ -90,11 +90,22 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 Filename: "{app}\{#AppExe}"; Parameters: "--enable-startup"; Flags: runhidden waituntilterminated; Tasks: startup; StatusMsg: "{cm:ConfiguringStartup}"
 Filename: "{app}\{#AppExe}"; Parameters: "--disable-startup"; Flags: runhidden waituntilterminated; Tasks: not startup
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent
+; Mise à jour lancée par NHMonitor lui-même (/AUTOUPDATE=1) : on relance l'application à la fin.
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: IsAutoUpdate
+
+[UninstallDelete]
+; Installeurs téléchargés par la mise à jour automatique.
+Type: filesandordirs; Name: "{app}\updates"
 
 [UninstallRun]
 Filename: "{app}\{#AppExe}"; Parameters: "--disable-startup"; Flags: runhidden waituntilterminated; RunOnceId: "DisableStartup"
 
 [Code]
+function IsAutoUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:AUTOUPDATE|0}') = '1';
+end;
+
 function IsPawnIOInstalled: Boolean;
 begin
   Result := RegKeyExists(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO');

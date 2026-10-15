@@ -29,6 +29,10 @@ public sealed class Settings
     public bool ShowNetDown { get; set; } = true;
     public bool ShowNetUp { get; set; } = true;
 
+    // Mises à jour : une vérification au plus toutes les 24 h (une requête vers api.github.com).
+    public bool CheckForUpdates { get; set; } = true;
+    public DateTime? LastUpdateCheckUtc { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "NHMonitor", "settings.json");
 

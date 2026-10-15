@@ -1,5 +1,9 @@
 # Compile à chaque push / pull request. Sur un tag vX.Y.Z, construit l'installeur et la version
-# portable puis publie une release GitHub avec les empreintes SHA-256.
+# portable puis publie une release GitHub avec les empreintes SHA-256 signées.
+#
+# Publier une mise à jour : changer <Version> dans NHMonitor.csproj, committer, puis
+#   git tag vX.Y.Z && git push origin vX.Y.Z
+# Les copies installées de NHMonitor la proposeront dans les 24 h.
 # Sécurité : uniquement des actions officielles GitHub (actions/*), droits minimaux par job,
 # publication via la CLI gh préinstallée (pas d'action tierce).
 name: build
@@ -30,6 +34,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: windows-latest
+    # Environnement "release" : la clé de signature y est stockée ; on peut y exiger une approbation
+    # manuelle (Settings > Environments > release > Required reviewers).
+    environment: release
     permissions:
       contents: write
     steps:
@@ -46,11 +53,15 @@ jobs:
             choco install innosetup --no-progress -y
           }
 
-      - name: Build release
+      - name: Build and sign release
         shell: pwsh
+        env:
+          # Clé privée ECDSA : sans elle la release échoue, plutôt que de publier une version
+          # que la mise à jour automatique refuserait.
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: |
           $version = '${{ github.ref_name }}'.TrimStart('v')
-          ./build/build-release.ps1 -Version $version
+          ./build/build-release.ps1 -Version $version -RequireSignature
 
       - name: Publish GitHub release
         shell: pwsh
