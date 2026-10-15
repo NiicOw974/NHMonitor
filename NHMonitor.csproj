@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>assets\NHMonitor.ico</ApplicationIcon>
+    <AssemblyName>NHMonitor</AssemblyName>
+    <RootNamespace>NHMonitor</RootNamespace>
+
+    <!-- Métadonnées visibles dans Propriétés > Détails de l'exécutable. -->
+    <Version>1.0.0</Version>
+    <Product>NHMonitor</Product>
+    <AssemblyTitle>NHMonitor</AssemblyTitle>
+    <Description>Moniteur CPU / GPU / RAM / réseau dans la barre des tâches Windows</Description>
+    <Company>Nicolas Hoareau</Company>
+    <Authors>Nicolas Hoareau</Authors>
+    <Copyright>Copyright © 2026 Nicolas Hoareau</Copyright>
+    <RepositoryUrl>https://github.com/NiicOw974/NHMonitor</RepositoryUrl>
+    <NeutralLanguage>fr-FR</NeutralLanguage>
+
+    <!-- Builds reproductibles, sans chemins locaux dans les binaires. -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
+    <SatelliteResourceLanguages>fr;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!-- Publication autonome (le runtime .NET est inclus) : rien à installer en plus pour l'utilisateur.
+       Pas de "single file" ni de compression : un exécutable qui s'auto-extrait ressemble à un packer
+       et déclenche davantage de faux positifs antivirus. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+  </ItemGroup>
+
+</Project>
